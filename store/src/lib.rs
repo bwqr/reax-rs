@@ -21,9 +21,9 @@ struct EventLoop<T: Fn(i32)> {
 }
 
 impl<T: Fn(i32)> EventLoop<T> {
-    fn start(mut self) -> ! {
+    fn start(mut self) {
         loop {
-            while let Ok((sub_id, kind)) = self.receiver.try_recv() {
+            for (sub_id, kind) in self.receiver.try_iter() {
                 match kind {
                     Kind::Register => self.sub_ids.insert(sub_id),
                     Kind::Unregister => self.sub_ids.remove(&sub_id),
@@ -39,7 +39,7 @@ impl<T: Fn(i32)> EventLoop<T> {
     }
 }
 
-pub fn start_event_loop<T: Fn(i32) + 'static>(f: T) {
+pub fn start_event_loop<T: Fn(i32)>(f: T) {
     let (sender, receiver) = channel::<(SubId, Kind)>();
 
     SENDER.set(Mutex::new(sender)).expect("failed to initialize SENDER");
@@ -55,7 +55,7 @@ pub fn register_event<'a>(sub_id: SubId) {
         .lock()
         .expect("failed to lock SENDER")
         .send((sub_id, Kind::Register))
-        .expect("failed to send event_callback");
+        .expect("failed to register event");
 }
 
 pub fn unregister_event<'a>(sub_id: SubId) {
@@ -64,5 +64,5 @@ pub fn unregister_event<'a>(sub_id: SubId) {
         .lock()
         .expect("failed to lock SENDER")
         .send((sub_id, Kind::Unregister))
-        .expect("failed to send event_callback");
+        .expect("failed to unregister event");
 }
