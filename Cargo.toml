@@ -8,3 +8,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+store = { path = "./store" }
+serde-reflection = "0.3.5"
+serde_yaml = "0.8.23"
