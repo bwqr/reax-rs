@@ -1,83 +1,120 @@
-use std::collections::HashSet;
-use std::sync::Mutex;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::{sync::{RwLock, mpsc::Sender, Mutex}, collections::HashSet};
 
 use once_cell::sync::OnceCell;
-
 use rand::RngCore;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use tokio::runtime::Runtime;
 
-
-static SENDER: OnceCell<Mutex<Sender<(Sub, Kind)>>> = OnceCell::new();
-
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct User {
-    id: i32,
-    name: String,
+    pub id: i32,
+    pub name: String,
 }
 
-enum Kind {
-    Register,
-    Unregister,
+static RUNTIME: OnceCell<Runtime> = OnceCell::new();
+static STORE: OnceCell<RwLock<Store>> = OnceCell::new();
+static HANDLER: OnceCell<Mutex<Sender<(HashSet<i32>, Vec<u8>)>>> = OnceCell::new();
+
+struct Observable<T: Serialize> {
+    state: State<T>,
+    subs: HashSet<i32>,
 }
 
-type Sub = String;
-
-struct EventLoop<T: Fn(i32, Vec<User>)> {
-    sub_ids: HashSet<Sub>,
-    receiver: Receiver<(Sub, Kind)>,
-    handler: T,
-}
-
-impl<T: Fn(i32, Vec<User>)> EventLoop<T> {
-    fn start(mut self) {
-        let mut rng_thread = rand::thread_rng();
-        loop {
-            for (sub_id, kind) in self.receiver.try_iter() {
-                match kind {
-                    Kind::Register => self.sub_ids.insert(sub_id),
-                    Kind::Unregister => self.sub_ids.remove(&sub_id),
-                };
-            }
-
-            let mut users = Vec::with_capacity(1000);
-            for _ in 0..1000 {
-                users.push(User { id: (rng_thread.next_u32() / 2 ) as i32, name: rng_thread.next_u64().to_string() });
-            }
-
-            for sub_id in self.sub_ids.iter() {
-                (self.handler)(sub_id.parse().unwrap(), users.clone());
-            }
-
-            std::thread::sleep(std::time::Duration::from_secs(3));
-        }
+impl<T: Serialize> Observable<T> {
+    fn next(&mut self, val: T) {
+        let ser_val = bincode::serialize(&val).expect("failed to serialize val");
+        self.state = State::Some(val);
+        HANDLER.get()
+            .expect("failed to get handler")
+            .lock()
+            .expect("failed to lock handler")
+            .send((self.subs.clone(), ser_val))
+            .expect("failed to send payload to handler");
     }
 }
 
-pub fn start_event_loop<T: Fn(i32, Vec<User>)>(f: T) {
-    let (sender, receiver) = channel::<(Sub, Kind)>();
-
-    SENDER.set(Mutex::new(sender)).expect("failed to initialize SENDER");
-
-    let event_loop = EventLoop { sub_ids: HashSet::new(), receiver, handler: f };
-
-    event_loop.start()
+enum State<T> {
+    Some(T),
+    Loading,
+    None,
 }
 
-pub fn register_event<'a>(sub_id: Sub) {
-    SENDER.get()
-        .expect("failed to get SENDER")
-        .lock()
-        .expect("failed to lock SENDER")
-        .send((sub_id, Kind::Register))
-        .expect("failed to register event");
+struct Store {
+    user: Observable<User>,
 }
 
-pub fn unregister_event<'a>(sub_id: Sub) {
-    SENDER.get()
-        .expect("failed to get SENDER")
-        .lock()
-        .expect("failed to lock SENDER")
-        .send((sub_id, Kind::Unregister))
-        .expect("failed to unregister event");
+pub fn init_runtime() {
+    eprintln!("starting the runtime");
+    RUNTIME
+        .set(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to initialize tokio runtime"),
+        )
+        .expect("failed to set tokio runtime");
+}
+
+pub fn init_store() {
+    STORE
+        .set(RwLock::new(Store {
+            user: Observable {
+                state: State::None,
+                subs: HashSet::new(),
+            },
+        }))
+        .map_err(|_| "StoreError")
+        .expect("failed to set store");
+}
+
+pub fn init_handler<F: Fn(HashSet<i32>, Vec<u8>)>(handler: F) {
+    let (send, recv) = std::sync::mpsc::channel();
+    HANDLER
+        .set(Mutex::new(send))
+        .map_err(|_| "HandlerError")
+        .expect("failed to set handler");
+
+    while let Ok(payload) = recv.recv() {
+        handler(payload.0, payload.1)
+    }
+}
+
+pub fn user() -> i32 {
+    let sub = rand::thread_rng().next_u32() as i32;
+
+    let mut store = STORE.get().expect("failed get STORE").write().expect("failed to acquire read access");
+    store.user.subs.insert(sub);
+
+    match &store.user.state {
+        State::Some(user) => {
+            let mut subs = HashSet::new();
+            subs.insert(sub);
+            HANDLER.get().expect("failed to get handler").lock().expect("failed to lock handler").send((subs, bincode::serialize(&user).expect("failed to serialize user"))).expect("failed to send payload to handler");
+        },
+        State::None => {
+            store.user.state = State::Loading;
+            fetch_user();
+        },
+        State::Loading => {},
+    }
+
+    sub
+}
+
+pub fn fetch_user() {
+    RUNTIME.get().expect("failed to get runtime").spawn(async {
+        let body = reqwest::get("https://babilium.com/api/user/my/profile?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE2NDUzNzQzOTksImV4cCI6MTY0NTQ2MDc5OSwidXNlcl9pZCI6MSwicm9sZV9pZCI6MX0.lhKq-IJQQIHXKB0K8gav8sPNnFbI6gzZyFlXqwqJpZE")
+            .await
+            .expect("failed to connect")
+            .text()
+            .await
+            .expect("failed to retrieve contents");
+
+        let mut thread_rng = rand::thread_rng();
+        STORE.get().expect("failed to fetch store").write().unwrap().user.next(User { id: thread_rng.next_u32() as i32, name: body });
+    });
+}
+
+pub fn unsubscribe(sub: i32) {
+    STORE.get().expect("failed to get store").write().expect("failed to acquire write access").user.subs.remove(&sub);
 }
