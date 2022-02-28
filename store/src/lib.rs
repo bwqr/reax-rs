@@ -82,7 +82,7 @@ pub fn init_handler<F: Fn(HashSet<i32>, Vec<u8>)>(handler: F) {
 pub fn user() -> i32 {
     let sub = rand::thread_rng().next_u32() as i32;
 
-    let mut store = STORE.get().expect("failed get STORE").write().expect("failed to acquire read access");
+    let mut store = STORE.get().expect("failed get STORE").write().expect("failed to acquire write access");
     store.user.subs.insert(sub);
 
     match &store.user.state {
@@ -103,7 +103,7 @@ pub fn user() -> i32 {
 
 pub fn fetch_user() {
     RUNTIME.get().expect("failed to get runtime").spawn(async {
-        let body = reqwest::get("https://babilium.com/api/user/my/profile?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE2NDUzNzQzOTksImV4cCI6MTY0NTQ2MDc5OSwidXNlcl9pZCI6MSwicm9sZV9pZCI6MX0.lhKq-IJQQIHXKB0K8gav8sPNnFbI6gzZyFlXqwqJpZE")
+        let body = reqwest::get("https://random.justyy.workers.dev/api/random/?cached&n=128")
             .await
             .expect("failed to connect")
             .text()

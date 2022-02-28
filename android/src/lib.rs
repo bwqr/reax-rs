@@ -2,50 +2,47 @@
 
 use jni::JNIEnv;
 use jni::objects::{JObject, JValue};
-use jni::signature::{JavaType, Primitive};
+use jni::signature::JavaType;
 use jni::sys::jint;
 
 #[no_mangle]
-pub extern fn Java_com_bwqr_rustgreetings_Store__1initRuntime(_: JNIEnv, _: JObject) {
+pub extern fn Java_com_bwqr_reaxdemo_Store__1initRuntime(_: JNIEnv, _: JObject) {
     store::init_runtime();
 }
 
 #[no_mangle]
-pub extern fn Java_com_bwqr_rustgreetings_Store__1initHandler<'a>(env: JNIEnv<'a>, _: JObject, handler: JObject<'a>) {
+pub extern fn Java_com_bwqr_reaxdemo_Store__1initHandler(env: JNIEnv, _: JObject, callback: JObject) {
     store::init_handler(|subs, ser_val| {
-        let array_len = ser_val.len().try_into().unwrap();
-        let byte_array = env.new_byte_array(array_len).unwrap();
-        env.set_byte_array_region(byte_array, 0, ser_val.iter().map(|byte| *byte as i8).collect::<Vec<i8>>().as_slice()).unwrap();
+        let subs_array = env.new_int_array(subs.len().try_into().unwrap()).unwrap();
+        env.set_int_array_region(subs_array, 0, subs.into_iter().collect::<Vec<i32>>().as_slice()).unwrap();
 
-        let message_class = env.find_class("android/os/Message").unwrap();
-        let obtain_id = env.get_static_method_id(message_class, "obtain", "(Landroid/os/Handler;ILjava/lang/Object;)Landroid/os/Message;").unwrap();
+        let bytes_array = env.new_byte_array(ser_val.len().try_into().unwrap()).unwrap();
+        env.set_byte_array_region(bytes_array, 0, ser_val.iter().map(|byte| *byte as i8).collect::<Vec<i8>>().as_slice()).unwrap();
 
-        for sub in subs {
-            let message = env.call_static_method_unchecked(message_class, obtain_id, JavaType::Object("android/os/Message".to_string()), &[JValue::Object(handler), JValue::Int(sub.try_into().unwrap()), JValue::Object(byte_array.into())]).unwrap();
-
-            let handler_class = env.get_object_class(handler).unwrap();
-            let send_message_id = env.get_method_id(handler_class, "sendMessage", "(Landroid/os/Message;)Z").unwrap();
-            env.call_method_unchecked(handler, send_message_id, JavaType::Primitive(Primitive::Boolean), &[message]).unwrap();
+        let callback_class = env.get_object_class(callback).unwrap();
+        let store_handler_id = env.get_method_id(callback_class, "invoke", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;").unwrap();
+        if let Err(e) = env.call_method_unchecked(callback, store_handler_id, JavaType::Object("Ljava/lang/Object;".to_string()), &[JValue::Object(subs_array.into()), JValue::Object(bytes_array.into())]) {
+            eprintln!("failed to call storeHandler, {:?}", e);
         }
     });
 }
 
 #[no_mangle]
-pub extern fn Java_com_bwqr_rustgreetings_Store__1initStore(_: JNIEnv, _: JObject) {
+pub extern fn Java_com_bwqr_reaxdemo_Store__1initStore(_: JNIEnv, _: JObject) {
     store::init_store();
 }
 
 #[no_mangle]
-pub extern fn Java_com_bwqr_rustgreetings_Store__1user(_: JNIEnv, _: JObject) -> jint {
+pub extern fn Java_com_bwqr_reaxdemo_Store__1user(_: JNIEnv, _: JObject) -> jint {
     store::user()
 }
 
 #[no_mangle]
-pub extern fn Java_com_bwqr_rustgreetings_Store__1fetchUser(_: JNIEnv, _: JObject) {
+pub extern fn Java_com_bwqr_reaxdemo_Store__1fetchUser(_: JNIEnv, _: JObject) {
     store::fetch_user()
 }
 
 #[no_mangle]
-pub extern fn Java_com_bwqr_rustgreetings_Store__1unsubscribe(_: JNIEnv, _: JObject, sub: jint) {
+pub extern fn Java_com_bwqr_reaxdemo_Store__1unsubscribe(_: JNIEnv, _: JObject, sub: jint) {
     store::unsubscribe(sub);
 }
